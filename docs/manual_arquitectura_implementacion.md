@@ -1,180 +1,186 @@
-# Manual de Arquitectura e Implementación: Hiperautomatización del Proceso de Compras MAXI
+# Manual de Arquitectura e Implementación: Compras MAXI (Bizagi 11.2.5)
 
-## Preámbulo: La Visión del Experto en Hiperautomatización
-
-Este documento detalla la arquitectura y la implementación de la solución de automatización para el proceso de compras de Supermercados MAXI. El objetivo trasciende la simple digitalización de un flujo de trabajo; representa una reingeniería estratégica diseñada para transformar un proceso manual y aislado en un activo empresarial orquestado, inteligente y resiliente.
-
-Nuestra filosofía se basa en que los procesos no son silos, sino un ecosistema interconectado. Por ello, cada decisión de diseño, desde el modelo de proceso hasta la última regla de negocio, se ha tomado con el fin de alinear los objetivos estratégicos de la empresa (eficiencia, control de costos, agilidad) con la ejecución operativa, mitigando riesgos y generando una visibilidad de 360 grados sobre la operación.
+> **Propósito:** Este documento detalla la arquitectura técnica, el diseño de implementación y la configuración de la solución de automatización para el proceso de compras de Supermercados MAXI. Sirve como una guía exhaustiva para desarrolladores, administradores de Bizagi y arquitectos de soluciones.
 
 ---
 
-## 1. Fase I: Arquitectura del Proceso "To-Be" (El Plano Maestro)
+## 1. Resumen y Alcance del MVP
 
-El primer paso fue rediseñar el flujo de trabajo para eliminar ineficiencias y puntos de fallo inherentes al proceso manual. El resultado es el siguiente modelo BPMN 2.0, que sirve como el plano ejecutable de nuestra solución.
+### 1.1. Propósito del MVP (42 horas)
+Automatizar y **orquestar en un BPM** las tareas manuales del proceso de compras para **conectar áreas**, **reducir tiempos operativos**, **disminuir costos**, **evitar errores humanos** y mantener el **stock actualizado** en la base de datos. Este MVP libera tiempo al equipo para enfocarse en **tareas de mayor valor** (análisis y decisión) en lugar de actividades repetitivas.
 
-### 1.1. Diagrama de Proceso Optimizado (BPMN 2.0)
+### 1.2. Objetivos del MVP
+- **Orquestación** del proceso end-to-end (Compras → Inventario → Adquisiciones → Cierre).
+- **SLA**: caducidad a los **3 días** en Inventario (parametrizable para demo).
+- **Decisiones críticas** modeladas (stock sí/no, carpeta completa).
+- **Radicado único** de orden de compra vía **Web Service SOAP**.
+- **Parametrización de catálogos** (Productos, Proveedores, Sucursales).
+- **Trazabilidad** de estados y resultados (éxito, negada por stock, vencida).
 
-![Diagrama BPMN del Proceso de Compras MAXI](https://i.imgur.com/83uX6gX.png)
+### 1.3. Alcance fuera del MVP (Roadmap)
+- Integración **ERP** (inventarios y maestros) + **webhooks** para disparar el proceso.
+- **Monitoreo de correo** para iniciar casos desde e-mails.
+- **RPA + IA** para diligenciamiento inteligente de formularios.
+- **Dashboards/Indicadores** (Power BI / Bizagi) y **Process Mining**.
+- Endurecimiento de **seguridad**, **auditoría**, **idempotencia** y **reintentos**.
 
-### 1.2. Análisis Detallado de la Arquitectura del Proceso
+---
 
+## 2. Arquitectura Funcional (BPMN 2.0)
+
+El proceso fue rediseñado para eliminar ineficiencias y puntos de fallo. El siguiente modelo BPMN 2.0 es el plano ejecutable de la solución.
+
+*(Nota: El diagrama BPMN original no está disponible. Se recomienda generarlo desde el BEX del proyecto en `export/`)*
+
+### 2.1. Análisis Detallado de la Arquitectura del Proceso
 El diagrama está estructurado para reflejar con precisión las responsabilidades y la lógica de negocio.
 
--   **Piscina (Pool) y Carriles (Lanes):** Se utiliza una única piscina (`Proceso de Compras MAXI`) para representar el alcance total del proceso bajo el control de la organización. Dentro de esta, se definen tres carriles que delimitan las responsabilidades funcionales:
-    -   **Gestión de Compras:** Responsable del inicio y cierre del ciclo de vida de la solicitud.
-    -   **Inventario:** Responsable exclusivo de la validación de existencias.
-    -   **Adquisiciones:** Responsable de la gestión de la orden de compra y la selección de proveedores.
+- **Piscina (Pool) y Carriles (Lanes):** Se utiliza una única piscina (`Proceso de Compras MAXI`) con tres carriles que delimitan las responsabilidades funcionales:
+    - **Gestión de Compras:** Responsable del inicio y cierre del ciclo de vida de la solicitud.
+    - **Inventario:** Responsable exclusivo de la validación de existencias.
+    - **Adquisiciones:** Responsable de la gestión de la orden de compra y la selección de proveedores.
 
--   **Decisión Estratégica Clave - Hiperautomatización del Envío:** Se tomó la decisión estratégica de eliminar la tarea manual `Preparar y Enviar Orden a Proveedores`. En el modelo optimizado, la Tarea de Servicio `Generar Número de Orden de Compra` no solo obtiene el número, sino que actúa como un disparador para que el sistema pueda orquestar el envío automático de la orden a los proveedores. Este cambio es fundamental, ya que:
-    -   **Mitiga Riesgos:** Elimina el error humano asociado al envío manual de correos.
-    -   **Aumenta la Eficiencia:** Reduce el tiempo de ciclo al eliminar un cuello de botella manual.
-    -   **Libera Recursos:** Permite al personal de Adquisiciones enfocarse en el análisis de propuestas, una tarea de mayor valor.
+- **Rutas de Proceso:**
+    1. **SÍ stock** → Rechazo y notificación (no se compra).
+    2. **NO stock** → Generar N° OC (SOAP) → Consolidar propuesta → Validar carpeta → Fin.
+    3. **Vencimiento** (SLA 3 días en Inventario) → Cancelación y notificación.
 
--   **Tipos de Tareas y Eventos Utilizados:**
-    -   **Tareas de Usuario (User Tasks):** `Registrar Solicitud`, `Validar Existencia`, `Consolidar Propuesta`, `Validar Carpeta`. Son los puntos de interacción humana donde se requiere juicio y toma de decisiones.
-    -   **Tarea de Servicio (Service Task):** `Generar Número de Orden de Compra`. Representa una integración automática con un sistema externo (el servicio web), eliminando la dependencia del Excel manual.
-    -   **Tarea de Script (Script Task):** `Actualizar Estado a Cancelado`. Ejecuta una acción automática interna del proceso sin intervención humana.
-    -   **Tarea de Envío (Send Task):** `Notificar...`. Se utiliza para modelar el envío automático de notificaciones.
-    -   **Evento de Límite de Temporizador (Boundary Timer Event):** Adjunto a `Validar Existencia en Inventario`, hace cumplir el SLA de 3 días, cancelando automáticamente la solicitud si no se atiende a tiempo.
-    -   **Evento Intermedio de Temporizador (Intermediate Timer Event):** `Esperar 3 días por Propuestas`. Pausa el proceso deliberadamente para crear la ventana de tiempo para la recepción de propuestas de proveedores.
+- **Tipos de Tareas y Eventos Utilizados:**
+    - **Tareas de Usuario (User Tasks):** `Registrar Solicitud`, `Validar Existencia`, `Consolidar Propuesta`, `Validar Carpeta`. Puntos de interacción humana.
+    - **Tarea de Servicio (Service Task):** `Generar Número de Orden de Compra`. Integración automática con el servicio web SOAP.
+    - **Tarea de Script (Script Task):** `Actualizar Estado a Cancelado`. Ejecuta una acción automática interna.
+    - **Tarea de Envío (Send Task):** `Notificar...`. Modela el envío automático de notificaciones.
+    - **Evento de Límite de Temporizador (Boundary Timer Event):** Adjunto a `Validar Existencia en Inventario`, hace cumplir el SLA de 3 días.
+    - **Evento Intermedio de Temporizador (Intermediate Timer Event):** `Esperar 3 días por Propuestas`. Pausa deliberada del proceso.
 
 ---
 
-## 2. Fase II: Arquitectura de Datos (La Fundación de la Inteligencia)
+## 3. Modelo de Datos (Arquitectura de Datos)
 
-Un proceso es tan inteligente como los datos que lo sustentan. El siguiente modelo de datos fue diseñado no solo para almacenar información, sino para capturar la trazabilidad completa y permitir la generación de KPIs significativos.
+Un proceso es tan inteligente como los datos que lo sustentan. El modelo fue diseñado para capturar la trazabilidad completa y permitir la generación de KPIs.
 
-### 2.1. Diagrama Entidad-Relación Final
+*(Nota: El Diagrama Entidad-Relación original no está disponible. Se puede visualizar en Bizagi Studio.)*
 
-![Diagrama Entidad-Relación de la solución](https://i.imgur.com/2Xgq8lP.png)
+### 3.1. Desglose Detallado de las Entidades
 
-### 2.2. Desglose Detallado de las Entidades
-
-Bizagi organiza las entidades en carpetas según su propósito. En nuestro proyecto, la estructura es la siguiente:
-
-![Estructura de Entidades en Bizagi Studio](https://i.imgur.com/g8Vw10N.png)
-
--   **Entidades Master:** Almacenan los datos transaccionales de cada caso.
--   **Entidades Parameter:** Almacenan los catálogos o listas de opciones.
-
-A continuación, el detalle de cada entidad y sus atributos:
-
-| Entidad | Atributo | Tipo de Dato (en Bizagi) | Descripción Detallada |
+| Entidad | Atributo | Tipo de Dato (Bizagi) | Descripción Detallada |
 | :--- | :--- | :--- | :--- |
-| **ProcesodeComprasMAXI** (Master) | Fecha Solicitud | `DateTime` | Almacena la fecha y hora exactas de creación de la solicitud. Se llena automáticamente. |
-| | Monto Total Aprobado | `Currency` | Almacena el valor final de la compra, registrado por el Supervisor de Adquisiciones. |
-| | Nombre Gestor Compras | `String` | Nombre del empleado que inicia la solicitud. Se llena automáticamente. |
-| | Numero Orden Unico | `String` | Almacena el número único devuelto por el servicio web. |
-| | Resultado Final | `String` | Guarda el estado final del caso (Ej: "Compra Exitosa", "Negada por Stock"). |
-| | StockSuficiente | `Boolean` | Almacena la decisión (Sí/No) del área de Inventario. |
-| | fkProveedorSeleccionado | Related Entity (`Cat_Proveedor`) | Relación que vincula la solicitud con el proveedor ganador. |
-| | fkSucursal | Related Entity (`Cat_Sucursal`) | Relación que vincula la solicitud con la sucursal que la originó. |
-| | DetalleProductos | Collection (`DetalleProducto`) | Relación de Colección (Uno a Muchos) que contiene la lista de productos. |
-| **DetalleProducto** (Master) | CantidadRequerida | `Integer` | Almacena el número de unidades solicitadas para un producto específico. |
-| | descripcion | `String` | Campo de texto para notas o especificaciones adicionales por producto. |
-| | fkProducto | Related Entity (`Cat_Producto`) | Relación que vincula esta línea de detalle con un producto del catálogo. |
-| | ProcesodeComprasMAXI | Related Entity | Relación inversa creada automáticamente por Bizagi para la colección. |
-| **Cat_Sucursal** (Parameter) | NombreSucursal | `String` | Nombre de la sucursal (Ej: "Sucursal Centro"). |
-| **Cat_Proveedor** (Parameter) | NombreProveedor | `String` | Nombre del proveedor (Ej: "Proveedor A"). |
-| **Cat_Producto** (Parameter) | NombreProducto | `String` | Nombre del producto (Ej: "Lápiz HB #2"). |
+| **ProcesodeComprasMAXI** (Master) | Fecha Solicitud | `DateTime` | Fecha y hora de creación de la solicitud (automático). |
+| | Monto Total Aprobado | `Currency` | Valor final de la compra. |
+| | Nombre Gestor Compras | `String` | Nombre del empleado que inicia el caso (automático). |
+| | Numero Orden Unico | `String` | Número único devuelto por el servicio web SOAP. |
+| | Resultado Final | `String` | Estado final del caso (Ej: "Compra Exitosa", "Negada por Stock"). |
+| | StockSuficiente | `Boolean` | Decisión (Sí/No) del área de Inventario. |
+| | fkProveedorSeleccionado | Related Entity (`Cat_Proveedor`) | Vínculo con el proveedor ganador. |
+| | fkSucursal | Related Entity (`Cat_Sucursal`) | Vínculo con la sucursal de origen. |
+| | DetalleProductos | Collection (`DetalleProducto`) | Colección (Uno a Muchos) con la lista de productos. |
+| **DetalleProducto** (Master) | CantidadRequerida | `Integer` | Unidades solicitadas para un producto. |
+| | descripcion | `String` | Notas o especificaciones adicionales por producto. |
+| | fkProducto | Related Entity (`Cat_Producto`) | Vínculo con un producto del catálogo. |
+| **Cat_Sucursal** (Parameter) | NombreSucursal | `String` | Nombre de la sucursal. |
+| **Cat_Proveedor** (Parameter) | NombreProveedor | `String` | Nombre del proveedor. |
+| **Cat_Producto** (Parameter) | NombreProducto | `String` | Nombre del producto. |
 
 ---
 
-## 3. Fase III: Diseño de la Experiencia de Usuario (Interfaces Inteligentes)
+## 4. Interfaces de Usuario (Formularios)
 
-Adoptamos una estrategia de reutilización de formularios para garantizar consistencia, acelerar el desarrollo y mitigar errores. Construimos un único "Formulario Maestro" y lo adaptamos para cada tarea.
+Se adopta una estrategia de **"Formulario Maestro"** para garantizar consistencia y acelerar el desarrollo. Un formulario base se clona y se adapta para cada tarea, ajustando la propiedad `Editable` de los controles.
 
-### 3.1. La Estrategia del "Formulario Maestro"
+- **Formulario 1: Registrar Solicitud de Compra**
+  - **Editables:** `Nombre Gestor Compras`, `Fecha Solicitud`, `fkSucursal`, y la tabla `DetalleProductos` (con `Inline add` habilitado).
+- **Formulario 2: Validar Existencia en Inventario**
+  - **Solo Lectura:** Información general y tabla de productos.
+  - **Editable:** `StockSuficiente` (Radio Button Sí/No).
+- **Formulario 3: Consolidar y Seleccionar Mejor Propuesta**
+  - **Solo Lectura:** Información general y tabla de productos.
+  - **Editables:** `fkProveedorSeleccionado`, `MontoTotalAprobado`.
+- **Formulario 4: Validar Carpeta de Compra Completa**
+  - **Solo Lectura:** Todos los controles, a modo de resumen final.
 
-1.  **Creación:** Se diseña un formulario completo en la primera tarea (`Registrar Solicitud de Compra`).
-2.  **Reutilización:** Para las tareas subsecuentes, en lugar de crear un formulario nuevo, se utiliza la función `Copy from` en la cinta de opciones del Diseñador de Formularios para clonar el maestro.
-3.  **Adaptación:** En cada formulario clonado, se ajustan las propiedades de los controles (principalmente la propiedad `Editable`) para mostrar u ocultar campos, o hacerlos de solo lectura, según el contexto de la tarea.
-
-### 3.2. Diseño Detallado de los Formularios
-
--   **Formulario 1: Registrar Solicitud de Compra**
-    -   **Controles Editables:** `Nombre Gestor Compras`, `Fecha Solicitud`, `fkSucursal`, y la tabla `DetalleProductos`.
-    -   **Funcionalidad Clave:** La colección `DetalleProductos` se arrastra al formulario, creando un control de Tabla (Table). Se configuran sus columnas (`fkProducto`, `CantidadRequerida`, `descripcion`) y se habilita la propiedad `Inline add` para una experiencia de usuario fluida al añadir productos.
-
--   **Formulario 2: Validar Existencia en Inventario**
-    -   **Reutilización:** Se clona el formulario maestro.
-    -   **Controles de Solo Lectura:** Todos los campos y la tabla del formulario maestro se configuran con la propiedad `Editable = No`.
-    -   **Control Editable:** Se añade el atributo `StockSuficiente` (de tipo Booleano), que se renderiza como un control de Radio Button (Sí/No). Este es el único punto de interacción.
-
--   **Formulario 3: Consolidar y Seleccionar Mejor Propuesta**
-    -   **Reutilización:** Se clona el formulario maestro.
-    -   **Controles de Solo Lectura:** La información general y la tabla de productos se configuran como no editables.
-    -   **Controles Editables:** Se añade un nuevo grupo "Decisión de Adquisición" que contiene los campos editables `fkProveedorSeleccionado` y `MontoTotalAprobado`.
-
--   **Formulario 4: Validar Carpeta de Compra Completa**
-    -   **Reutilización:** Se clona el formulario maestro.
-    -   **Funcionalidad:** Es un formulario de resumen total. Se añaden todos los campos relevantes del proceso (`StockSuficiente`, `fkProveedorSeleccionado`, etc.).
-    -   **Controles de Solo Lectura:** Todos los controles del formulario se configuran con `Editable = No`, creando una vista final segura para la aprobación.
+**Sugerencia UX:** Usar un control **Search** para la columna `Producto` en la tabla, con un filtro `Deshabilitada = false` para mejorar el rendimiento y la claridad.
 
 ---
 
-## 4. Fase IV: Lógica de Negocio e Integraciones (El Cerebro del Proceso)
+## 5. Lógica de Negocio e Integraciones
 
-Esta fase dota al proceso de la inteligencia para ejecutar tareas, tomar decisiones y comunicarse con sistemas externos.
-
-### 4.1. Automatización de Tareas Administrativas
-
+### 5.1. Reglas de Negocio y Validaciones (MVP)
 Se utilizan Expresiones en los eventos `On Enter` y `On Exit` de las actividades.
 
-Para insertar una expresión: En el `Expression Manager`, se hace clic derecho en la línea de flujo y se selecciona `Expression`. Se hace doble clic en el nuevo bloque para abrir el editor de código.
+- **Registrar (On Enter):**
+  ```javascript
+  <ProcesodeComprasMAXI.FechaSolicitud> = DateTime.Now;
+  <ProcesodeComprasMAXI.NombreGestorCompras> = Me.Case.Creator.FullName;
+  ```
+- **Validar rutas por stock:**
+  - **SÍ** → Ruta hacia `Notificar Rechazo por Existencia`.
+  - **NO** → Ruta hacia `Adquisiciones`.
+- **Notificar Rechazo (On Enter):**
+  ```javascript
+  <ProcesodeComprasMAXI.ResultadoFinal> = "Negada por Stock";
+  ```
+- **Notificar Vencimiento (On Enter):**
+  ```javascript
+  <ProcesodeComprasMAXI.ResultadoFinal> = "Vencida por Vencimiento";
+  ```
+- **Validar Carpeta (On Exit):**
+  - Si la decisión es "Sí", se establece el resultado final.
+  ```javascript
+  <ProcesodeComprasMAXI.ResultadoFinal> = "Compra Exitosa";
+  ```
 
-![Editor de Expresiones de Bizagi](https://i.imgur.com/00lqXgX.png)
+**Validaciones de Datos:**
+- **Registrar:** Al menos **1** ítem en `DetalleProductos`; `CantidadRequerida > 0`.
+- **Consolidar:** `fkProveedorSeleccionado` requerido; `MontoTotalAprobado > 0`.
 
-**Reglas Implementadas:**
-
--   **Actividad:** `Registrar Solicitud de Compra`
-    -   **Evento:** `On Enter`
-    -   **Código:**
-        ```javascript
-        // Asigna la fecha y hora actual del sistema
-        <ProcesodeComprasMAXI.FechaSolicitud> = DateTime.Now;
-        // Asigna el nombre completo del usuario que creó el caso
-        <ProcesodeComprasMAXI.NombreGestorCompras> = Me.Case.Creator.FullName;
-        ```
-
--   **Actividad:** `Notificar Rechazo por Existencia`
-    -   **Evento:** `On Enter`
-    -   **Código:** `<ProcesodeComprasMAXI.ResultadoFinal> = "Negada por Stock";`
-
--   **Actividad:** `Notificar Cancelación por Vencimiento`
-    -   **Evento:** `On Enter`
-    -   **Código:** `<ProcesodeComprasMAXI.ResultadoFinal> = "Vencida por Vencimiento";`
-
--   **Actividad:** `Validar Carpeta de Compra Completa`
-    -   **Evento:** `On Exit`
-    -   **Código:** `<ProcesodeComprasMAXI.ResultadoFinal> = "Compra Exitosa";`
-
-### 4.2. Integración del Servicio Web SOAP
-
-Este es un pilar de la hiperautomatización, reemplazando el Excel manual.
-
-1.  **Localización del Asistente:** Se accede al asistente correcto a través del menú superior de Bizagi Studio: `Tools -> Web Service Connector`.
-2.  **Configuración de la Conexión:**
-    -   En el asistente, se selecciona el tipo **SOAP**.
-    -   Se ingresa la URL del WSDL: `https://legacy.bizagi.com/OfficeSupplyWS/OfficeService.asmx?WSDL`
-    -   Se hace clic en **Go**. Bizagi analiza el servicio y muestra los métodos disponibles.
-        ![Asistente de Conector de Servicio Web en Bizagi](https://i.imgur.com/2Y4406B.png)
-    -   Se selecciona el método `PurchaseOrderNumber` y se asigna un nombre descriptivo a la interfaz, como `ObtenerNumeroOrdenCompra`.
-    -   Se finaliza el asistente para guardar la conexión.
-3.  **Invocación desde el Proceso:**
-    -   En el paso de "Business Rules", se selecciona la Tarea de Servicio `Generar Número de Orden de Compra`.
-    -   Se configura la invocación de la interfaz, seleccionando el conector recién creado.
-    -   En la pestaña `Output Mapping`, se arrastra el campo de respuesta del servicio (`ResPurchaseOrder`) y se suelta sobre el campo de nuestro modelo de datos `NumeroOrdenUnico` para crear el vínculo.
+### 5.2. Integración: SOAP para Número de Orden
+- **WSDL:** `https://legacy.bizagi.com/OfficeSupplyWS/OfficeService.asmx?WSDL`
+- **Binding:** `OfficeServiceSoap12`
+- **Operación:** `PurchaseOrderNumber`
+- **Implementación:**
+  1. Usar el **Web Service Connector** de Bizagi (`Tools -> Web Service Connector`).
+  2. Configurar la conexión SOAP con la URL del WSDL.
+  3. Seleccionar la operación `PurchaseOrderNumber`.
+  4. En la Tarea de Servicio `Generar Número de Orden de Compra`, invocar el conector.
+  5. En `Output Mapping`, mapear la respuesta del servicio al atributo `ProcesodeComprasMAXI.NumeroOrdenUnico`.
+- **Manejo de errores (MVP):** Si la invocación falla, se muestra un mensaje y se permite el reintento en la misma tarea. No se debe avanzar si `NumeroOrdenUnico` está vacío.
 
 ---
 
-## 5. Fase V: Configuración Final y Ejecución
+## 6. Instalación y Configuración
 
-Para que la aplicación sea funcional y demostrable, se realizaron los siguientes pasos finales:
+### 6.1. Importar Solución
+1. En Bizagi Studio **11.2.5**, importar **BEX** y **BDEX** desde la carpeta `export/`.
+2. Publicar/ejecutar en el ambiente de desarrollo.
+3. Validar roles, asignaciones y licenciamiento.
 
--   **Poblar Catálogos:** Se identificó que las listas desplegables en los formularios aparecían vacías. La solución fue:
-    1.  Ejecutar el proyecto con el botón **Run**.
-    2.  En el Portal de Trabajo que se abre en el navegador, navegar a **Admin -> Entities**.
-    3.  Seleccionar cada entidad paramétrica (`Cat_Producto`, `Cat_Sucursal`, `Cat_Proveedor`) y usar el botón de añadir (`+`) para ingresar los datos de ejemplo necesarios para las pruebas (contenidos en los archivos `.csv` de la carpeta `/data/catalogos`).
+### 6.2. Cargar Catálogos
+1. En el **Work Portal**, navegar a **Admin → Entities → Manage Entities**.
+2. Seleccionar `Cat_Producto`, `Cat_Proveedor` y `Cat_Sucursal`.
+3. Usar la opción de importación de Excel, utilizando los archivos CSV de la carpeta `data/catalogos` como guía para crear los archivos de carga masiva con las hojas `Data`, `Configuration` y `List`.
+4. **Recomendación para Demo:** Habilitar solo 5 productos (`Deshabilitada = FALSE`) y filtrar en el formulario por `Deshabilitada = false`.
 
-Este documento representa el estado completo y detallado del proyecto de hiperautomatización. Cada componente ha sido diseñado con un propósito claro, contribuyendo a una solución orquestada que entrega un valor estratégico medible a Supermercados MAXI.
+### 6.3. Configurar E-mail (SMTP) — Opcional
+- **Ubicación:** `Configuration → Environment → Development → Mail Server`.
+- **Parámetros:** Host, puerto (587/465), TLS/SSL, usuario/clave, y dirección "From".
+- **Validación:** Probar con una plantilla de notificación.
+
+---
+
+## 7. Cómo Probar (Escenarios E2E)
+
+1. **Happy Path (NO stock):** Registrar → Inventario (NO) → Generar N° OC → Consolidar → Validar carpeta = Sí → **Compra Exitosa**.
+2. **Rechazo por Stock (SÍ stock):** Registrar → Inventario (SÍ) → **Negada por Stock** (+ notificación).
+3. **Vencimiento de Tarea:** Registrar → No atender la tarea de Inventario → A los 3 días (o 2 min en demo) → **Vencida por Vencimiento** (+ notificación).
+
+---
+
+## 8. Solución de Problemas (FAQ)
+
+- **La lista de productos se queda cargando y expira sesión:**
+  - **Causa:** Demasiados registros habilitados en `Cat_Producto` y sin filtro en el formulario.
+  - **Solución:** Poner `Deshabilitada = TRUE` a los productos que no se usan y aplicar un filtro `Deshabilitada = false` en el control del formulario (preferiblemente un control **Search**).
+- **El SOAP no devuelve número de orden:**
+  - **Solución:** Revisar la conectividad al WSDL y que el binding sea `OfficeServiceSoap12`. Verificar la traza del error (`faultstring`) y asegurar que la tarea de servicio permita reintentos.
+- **Los correos de notificación no llegan:**
+  - **Solución:** Validar la configuración del servidor SMTP (puerto, TLS/SSL, credenciales). Probar el envío con un script externo (ej. PowerShell) para aislar el problema.
